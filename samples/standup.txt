@@ -1,0 +1,6 @@
+Standup notes
+
+Alex owns the launch checklist.
+Jordan can edit the welcome draft.
+
+Imported text keeps line breaks and does not treat <b>tags</b> as formatting.
