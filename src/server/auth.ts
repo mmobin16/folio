@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { ensureDatabase, prisma } from "@/lib/db";
 import { jsonError } from "@/lib/http";
 import { hashPassword, verifyPassword } from "@/lib/passwords";
-import { SESSION_COOKIE } from "@/lib/session";
+import { SESSION_COOKIE, SESSION_MAX_AGE_SECONDS } from "@/lib/session";
 import type { SessionUser } from "@/lib/types";
 
 const DUMMY_HASH = hashPassword("folio-dummy-password");
@@ -57,6 +57,28 @@ export async function requireApiUser(): Promise<SessionUser | NextResponse> {
   const user = await getCurrentUser();
   if (!user) return jsonError("Sign in to continue.", 401);
   return user;
+}
+
+export async function createLoginSession(userId: string): Promise<string> {
+  const token = createSessionToken();
+  await prisma.session.create({
+    data: {
+      tokenHash: hashSessionToken(token),
+      userId,
+      expiresAt: new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000),
+    },
+  });
+  return token;
+}
+
+export function applySessionCookie(response: NextResponse, token: string) {
+  response.cookies.set(SESSION_COOKIE, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: SESSION_MAX_AGE_SECONDS,
+  });
 }
 
 export async function authenticate(email: string, password: string): Promise<SessionUser | null> {

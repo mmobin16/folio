@@ -1,19 +1,24 @@
 # Folio
 
-Folio is a small shared writing desk. It is the working slice of a Google Docs-style product built for the Ajaia full-stack assignment: create and edit rich-text documents, import a file into a new draft, and share that draft with another person.
+Folio is a shared writing desk. It is a Google Docs-style editor for the Ajaia full-stack assignment: accounts, rich-text documents, file import, sharing, comments, version history, and export.
 
-It is intentionally not a full Docs clone. Real-time co-editing, comments, and version history are out of scope. What is here works end to end, persists, and can be deployed without a paid service.
+Simultaneous typing is presence plus a conflict check, not a live merge. Two people can still overwrite each other; a save that lost the race returns 409 and asks for a reload.
 
 ## What you can do
 
-- Sign in as one of two seeded people.
-- Create, rename, edit, and delete a document you own.
-- Format text: bold, italic, underline, headings, bulleted lists, numbered lists, and quotes.
-- Autosave, then reopen the same draft after a refresh with the formatting intact.
-- Import a `.txt`, `.md`, or `.docx` file (up to 2 MB) as a new document. Images inside a Word file are skipped.
-- Share a document as **Can edit** or **Can view**. Only the owner can change access or delete the document.
-- See **Your documents** and **Shared with you** as separate lists.
-- Download the current draft as Markdown.
+- Create an account, or sign in as one of two seeded people. Sessions survive a refresh.
+- Edit your name and email from **Account**.
+- Create, rename, search, sort, edit, and delete a document you own.
+- Format text: bold, italic, underline, links, headings, paragraphs, bulleted lists, numbered lists, and quotes. Undo and redo are in the toolbar.
+- Autosave, or press Ctrl/Cmd+S. Reopen the same draft after a refresh with the formatting intact. The editor stores sanitized HTML and a TipTap JSON document.
+- Import a `.txt`, `.md`, or `.docx` file (up to 2 MB) as a new document, or replace the body of a document you can edit. Word tables stay tables, and pictures — including a logo in the page header — are kept.
+- Attach a PDF, image, text, Markdown, or Word file (2 MB) to a document.
+- Share a document as **Can edit** or **Can view**. Search for a registered person by name or email. Only the owner can change access or delete the document.
+- See **Owned by me** and **Shared with me** as separate lists. Shared drafts name the person who shared them.
+- Comment, reply, resolve, or propose a suggestion. A suggestion does not change the draft until someone with edit access applies it.
+- Open version history and restore an earlier snapshot.
+- See who currently has the document open, including who is editing.
+- Download the current draft as Markdown, PDF, or plain text.
 
 ## Demo accounts
 
@@ -24,7 +29,7 @@ Both accounts use the password `ajaia-demo`.
 | Alex Rivera | `alex.rivera@ajaia.dev` | Owns "Welcome to Folio" and a private "Launch checklist". |
 | Jordan Lee | `jordan.lee@ajaia.dev` | Owns "Reading notes". Can edit the welcome draft Alex shared. |
 
-The login screen lists both people. Choosing one fills the form. There is no open registration, so sharing always targets a real account.
+The login screen lists both people. Choosing one fills the form. **Create an account** is on the login page for anyone else. Sharing only works for an email that already has an account.
 
 Suggested review path:
 
@@ -70,9 +75,9 @@ npm test
 The suite covers:
 
 - Who can read, edit, share, and delete.
-- HTML sanitizing, Markdown export, and password hashing.
+- HTML sanitizing, structured JSON, Markdown and PDF export, and password hashing.
 - Import of plain text and Markdown, including rejection of unsupported files.
-- A real SQLite database: seeded visibility, editor vs viewer, stale-save rejection, and revoking access.
+- A real SQLite database: registration, seeded visibility, editor vs viewer, comments and suggestions, version restore, presence, attachments, stale-save rejection, and revoking access.
 
 ## Deploy on Vercel
 
@@ -118,7 +123,7 @@ Stated in the import dialog and enforced by the API:
 - Extensions: `.txt`, `.md`, `.markdown`, `.docx`
 - Maximum size: 2 MB
 - Word documents must be real `.docx` zip files. Old `.doc` files are rejected.
-- Images, scripts, and unsupported tags are stripped. Headings below H3 become H3.
+- Scripts and unsupported tags are stripped. Headings below H3 become H3. Tables and PNG, JPEG, GIF, and WebP pictures are kept.
 
 ## Project map
 
@@ -136,17 +141,9 @@ The HTTP API is under `/api`. Document rules live in `src/server/documents.ts` a
 
 ## What is not in this version
 
-- Real-time cursors or simultaneous editing. Two people can overwrite each other. A save that lost the race returns 409 and asks for a reload.
-- Comments, suggestions, and version history.
-- Public signup, password reset, and SSO.
-- PDF export. Markdown download is the portable copy.
-- Images and tables in the editor.
-
-## With another 2–4 hours
-
-1. A short version history: keep the previous HTML snapshot on each save and let the owner restore it.
-2. Presence: show "Jordan is viewing" with a lightweight polling endpoint, still without a CRDT.
-3. Append-only import into the open document, not only import-as-new.
+- Live cursors or character-by-character merging. Presence shows who is here. A save that lost the race returns 409 and asks for a reload.
+- Password reset and SSO.
+- Drawing tools. Imported tables and pictures can be edited as text around them.
 
 ## More detail
 

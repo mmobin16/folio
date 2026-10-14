@@ -15,6 +15,11 @@ process.env.DATABASE_URL = `file:${databasePath}`;
 
 const { prisma, ensureDatabase } = await import("../src/lib/db");
 const documents = await import("../src/server/documents");
+const accounts = await import("../src/server/accounts");
+const comments = await import("../src/server/comments");
+const versions = await import("../src/server/versions");
+const presence = await import("../src/server/presence");
+const attachments = await import("../src/server/attachments");
 
 describe("document access", () => {
   let alexId = "";
@@ -113,6 +118,129 @@ describe("document access", () => {
 
     const revoked = await documents.revokeAccess(alexId, created.id, jordanId);
     expect(revoked.shares).toHaveLength(0);
+    await documents.deleteDocument(alexId, created.id);
+  });
+
+  it("covers accounts, structured saves, comments, history, presence, and files", async () => {
+    const casey = await accounts.registerAccount({
+      name: "Casey Ng",
+      email: "casey.ng@ajaia.dev",
+      password: "long-password",
+    });
+    const profile = await accounts.updateProfile(casey.id, {
+      name: "Casey N.",
+      email: "casey.ng@ajaia.dev",
+    });
+    expect(profile.name).toBe("Casey N.");
+    await expect(accounts.registerAccount({
+      name: "Casey Again",
+      email: "casey.ng@ajaia.dev",
+      password: "long-password",
+    })).rejects.toMatchObject({ status: 409 });
+
+    const created = await documents.createDocument(alexId, {
+      title: "Structured draft",
+      content: "<p>Original</p>",
+      contentJson: JSON.stringify({ type: "doc", content: [{ type: "paragraph" }] }),
+    });
+    expect(created.contentJson).toContain("paragraph");
+    await expect(documents.getDocument(casey.id, created.id)).rejects.toMatchObject({ status: 403 });
+
+    const edited = await documents.updateDocument(alexId, created.id, {
+      content: "<p>Original revised</p>",
+      contentJson: JSON.stringify({
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "Original revised" }] }],
+      }),
+      baseUpdatedAt: created.updatedAt,
+    });
+    const again = await documents.updateDocument(alexId, created.id, {
+      title: "Structured draft",
+      content: "<p>Latest body</p>",
+      baseUpdatedAt: edited.updatedAt,
+    });
+    expect(again.content).toContain("Latest body");
+
+    const history = await versions.listVersions(alexId, created.id);
+    expect(history.length).toBeGreaterThanOrEqual(2);
+    expect(history.length).toBeLessThanOrEqual(3);
+    const details = await Promise.all(
+      history.map((version) => versions.getVersion(alexId, created.id, version.id)),
+    );
+    const original = details.find((version) => version.content.includes("Original</p>"));
+    expect(original).toBeTruthy();
+    await versions.restoreVersion(alexId, created.id, original!.id);
+    const restored = await documents.getDocument(alexId, created.id);
+    expect(restored.content).toContain("Original</p>");
+    expect(restored.content).not.toContain("Latest body");
+
+    await documents.grantAccess(alexId, created.id, DEMO_USERS[1].email, "view");
+    await expect(
+      documents.grantAccess(alexId, created.id, DEMO_USERS[1].email, "view"),
+    ).rejects.toMatchObject({ status: 409 });
+    await expect(versions.restoreVersion(jordanId, created.id, original!.id)).rejects.toMatchObject({
+      status: 403,
+    });
+
+    const beforeComment = await documents.getDocument(alexId, created.id);
+    const thread = await comments.addComment(jordanId, created.id, {
+      body: "Please add a line",
+      kind: "suggestion",
+      suggestion: "Added from a suggestion",
+    });
+    expect(thread).toHaveLength(1);
+    const afterComment = await documents.getDocument(alexId, created.id);
+    expect(afterComment.content).toBe(beforeComment.content);
+
+    const replied = await comments.addComment(alexId, created.id, {
+      body: "I will consider it",
+      parentId: thread[0].id,
+    });
+    expect(replied[0].replies).toHaveLength(1);
+
+    await expect(comments.applySuggestion(jordanId, created.id, thread[0].id)).rejects.toMatchObject({
+      status: 403,
+    });
+    const applied = await comments.applySuggestion(alexId, created.id, thread[0].id);
+    expect(applied.document.content).toContain("Added from a suggestion");
+    await expect(comments.addComment(casey.id, created.id, { body: "nope" })).rejects.toMatchObject({
+      status: 403,
+    });
+
+    await presence.touchPresence(alexId, created.id, "editing");
+    const people = await presence.listPresence(jordanId, created.id);
+    expect(people.some((person) => person.userId === alexId && person.activity === "editing")).toBe(true);
+    await presence.clearPresence(alexId, created.id);
+    const gone = await presence.listPresence(jordanId, created.id);
+    expect(gone.some((person) => person.userId === alexId)).toBe(false);
+
+    await expect(
+      attachments.addAttachment(alexId, created.id, {
+        filename: "virus.exe",
+        mimeType: "application/octet-stream",
+        bytes: Buffer.from("nope"),
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    await attachments.addAttachment(alexId, created.id, {
+      filename: "note.txt",
+      mimeType: "text/plain",
+      bytes: Buffer.from("hello attachment"),
+    });
+    const files = await attachments.listAttachments(jordanId, created.id);
+    expect(files.map((file) => file.filename)).toContain("note.txt");
+    const downloaded = await attachments.readAttachment(jordanId, created.id, files[0].id);
+    expect(downloaded.bytes.toString()).toBe("hello attachment");
+    await expect(
+      attachments.addAttachment(jordanId, created.id, {
+        filename: "other.txt",
+        mimeType: "text/plain",
+        bytes: Buffer.from("no"),
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+
+    const matches = await accounts.searchUsers(alexId, "casey");
+    expect(matches.some((match) => match.email === "casey.ng@ajaia.dev")).toBe(true);
+
     await documents.deleteDocument(alexId, created.id);
   });
 });

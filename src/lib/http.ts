@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { DocumentError } from "@/server/errors";
+import { AccountError, DocumentError } from "@/server/errors";
 import { ImportError } from "@/lib/import-file";
 import { firstZodMessage } from "@/lib/validators";
 
@@ -40,7 +40,7 @@ export function rejectCrossOrigin(request: Request): NextResponse | null {
 }
 
 export function toErrorResponse(error: unknown) {
-  if (error instanceof DocumentError || error instanceof ImportError) {
+  if (error instanceof DocumentError || error instanceof AccountError || error instanceof ImportError) {
     return jsonError(error.message, error.status);
   }
   if (error instanceof ZodError) {

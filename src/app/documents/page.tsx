@@ -13,7 +13,7 @@ export default async function DocumentsPage() {
 
   return (
     <>
-      <AppHeader name={user.name} />
+      <AppHeader name={user.name} email={user.email} />
       <main>
         <Library owned={documents.owned} shared={documents.shared} />
       </main>

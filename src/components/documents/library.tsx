@@ -7,6 +7,8 @@ import { api } from "@/lib/api-client";
 import { formatTimestamp, roleLabel } from "@/lib/format";
 import type { DocumentDetail, DocumentListItem } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { confirmFolio } from "@/components/ui/folio-dialogs";
+import { FileField } from "@/components/ui/file-field";
 
 type LibraryProps = {
   owned: DocumentListItem[];
@@ -17,6 +19,8 @@ export function Library({ owned: initialOwned, shared: initialShared }: LibraryP
   const router = useRouter();
   const [owned, setOwned] = useState(initialOwned);
   const [shared, setShared] = useState(initialShared);
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<"recent" | "oldest" | "az" | "za">("recent");
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -69,8 +73,29 @@ export function Library({ owned: initialOwned, shared: initialShared }: LibraryP
     }
   }
 
+  function arrange(items: DocumentListItem[]) {
+    const needle = query.trim().toLowerCase();
+    const filtered = needle ? items.filter((item) => item.title.toLowerCase().includes(needle)) : items;
+    return [...filtered].sort((left, right) => {
+      if (sort === "az") return left.title.localeCompare(right.title);
+      if (sort === "za") return right.title.localeCompare(left.title);
+      if (sort === "oldest") return left.updatedAt.localeCompare(right.updatedAt);
+      return right.updatedAt.localeCompare(left.updatedAt);
+    });
+  }
+
+  const visibleOwned = arrange(owned);
+  const visibleShared = arrange(shared);
+  const searching = query.trim().length > 0;
+
   async function remove(document: DocumentListItem) {
-    if (!window.confirm(`Delete “${document.title}”? This cannot be undone.`)) return;
+    const confirmed = await confirmFolio({
+      title: "Delete document",
+      message: `“${document.title}” will be removed from your desk. This cannot be undone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!confirmed) return;
     setError(null);
     try {
       await api(`/api/documents/${document.id}`, { method: "DELETE" });
@@ -100,6 +125,33 @@ export function Library({ owned: initialOwned, shared: initialShared }: LibraryP
         </div>
       </div>
 
+      <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+        <label className="sr-only" htmlFor="document-search">
+          Search documents by title
+        </label>
+        <input
+          id="document-search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search by title"
+          className="w-full rounded-md border border-line bg-sheet px-3 py-2 text-sm outline-none focus:border-accent sm:max-w-sm"
+        />
+        <label className="sr-only" htmlFor="document-sort">
+          Sort documents
+        </label>
+        <select
+          id="document-sort"
+          value={sort}
+          onChange={(event) => setSort(event.target.value as "recent" | "oldest" | "az" | "za")}
+          className="rounded-md border border-line bg-sheet px-3 py-2 text-sm"
+        >
+          <option value="recent">Recently updated</option>
+          <option value="oldest">Oldest first</option>
+          <option value="az">Title A–Z</option>
+          <option value="za">Title Z–A</option>
+        </select>
+      </div>
+
       {error ? (
         <p className="mt-4 rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger" role="alert">
           {error}
@@ -107,15 +159,15 @@ export function Library({ owned: initialOwned, shared: initialShared }: LibraryP
       ) : null}
 
       <DocumentSection
-        title="Your documents"
-        empty="You have not created a document yet."
-        documents={owned}
+        title="Owned by me"
+        empty={searching ? "No titles match that search." : "You have not created a document yet."}
+        documents={visibleOwned}
         onDelete={(document) => void remove(document)}
       />
       <DocumentSection
-        title="Shared with you"
-        empty="Nothing has been shared with you yet."
-        documents={shared}
+        title="Shared with me"
+        empty={searching ? "No titles match that search." : "Nothing has been shared with you yet."}
+        documents={visibleShared}
         onDelete={null}
       />
 
@@ -123,13 +175,11 @@ export function Library({ owned: initialOwned, shared: initialShared }: LibraryP
         <form onSubmit={(event) => void importFile(event)}>
           <h2 className="font-serif text-2xl tracking-tight">Import a file</h2>
           <p className="mt-2 text-sm text-muted">
-            .txt, .md, and .docx up to 2 MB become a new document. Images inside a Word file are skipped.
+            .txt, .md, and .docx up to 2 MB become a new document. Word tables, pictures, and page breaks are kept, and a header logo is repeated on each page.
           </p>
-          <input
-            ref={fileRef}
-            type="file"
+          <FileField
+            inputRef={fileRef}
             accept=".txt,.md,.markdown,.docx,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            className="mt-4 block w-full text-sm"
             required
           />
           <div className="mt-5 flex justify-end gap-2">
@@ -178,7 +228,7 @@ function DocumentSection({
                 </p>
                 <p className="mt-2 text-xs text-muted">
                   {formatTimestamp(document.updatedAt)}
-                  {document.role !== "owner" ? ` · from ${document.ownerName}` : ""}
+                  {document.role !== "owner" ? ` · Shared by ${document.ownerName} (${document.ownerEmail})` : ""}
                 </p>
               </div>
               <div className="flex shrink-0 flex-col items-end gap-2">

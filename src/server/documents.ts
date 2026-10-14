@@ -1,13 +1,21 @@
+import { sanitizeContentJson } from "@/lib/content-json";
 import { ensureDatabase, prisma } from "@/lib/db";
 import { sanitizeDocumentHtml, textPreview } from "@/lib/html";
 import { parsePermission, resolveAccess, type SharePermission } from "@/lib/permissions";
 import type { DocumentDetail, DocumentListItem, DocumentShareView } from "@/lib/types";
 import { DocumentError } from "@/server/errors";
 
+type Snapshot = {
+  title: string;
+  content: string;
+  contentJson: string;
+};
+
 type DocumentRecord = {
   id: string;
   title: string;
   content: string;
+  contentJson: string;
   createdAt: Date;
   updatedAt: Date;
   ownerId: string;
@@ -51,6 +59,7 @@ function toDetail(document: DocumentRecord, userId: string): DocumentDetail {
     id: document.id,
     title: document.title,
     content: document.content,
+    contentJson: document.contentJson,
     updatedAt: document.updatedAt.toISOString(),
     createdAt: document.createdAt.toISOString(),
     role: access.role,
@@ -119,9 +128,50 @@ export async function getDocument(userId: string, documentId: string): Promise<D
   return toDetail(await loadDocument(documentId), userId);
 }
 
+function sameSnapshot(left: Snapshot, right: Snapshot): boolean {
+  return (
+    left.title === right.title &&
+    left.content === right.content &&
+    left.contentJson === right.contentJson
+  );
+}
+
+/**
+ * Keeps the copy from before the first edit, then folds a short burst of
+ * saves from the same person into the latest snapshot.
+ */
+async function captureVersion(documentId: string, authorId: string, before: Snapshot, after: Snapshot) {
+  if (sameSnapshot(before, after)) return;
+
+  const latest = await prisma.documentVersion.findFirst({
+    where: { documentId },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+  });
+
+  if (!latest) {
+    await prisma.documentVersion.create({ data: { documentId, authorId, ...before } });
+    await prisma.documentVersion.create({ data: { documentId, authorId, ...after } });
+    return;
+  }
+
+  const recent =
+    latest.authorId === authorId &&
+    Date.now() - latest.createdAt.getTime() < 90_000 &&
+    latest.title === before.title &&
+    latest.content === before.content &&
+    latest.contentJson === before.contentJson;
+
+  if (recent) {
+    await prisma.documentVersion.update({ where: { id: latest.id }, data: after });
+    return;
+  }
+
+  await prisma.documentVersion.create({ data: { documentId, authorId, ...after } });
+}
+
 export async function createDocument(
   ownerId: string,
-  input: { title?: string; content?: string } = {},
+  input: { title?: string; content?: string; contentJson?: string } = {},
 ): Promise<DocumentDetail> {
   await ensureDatabase();
   const title = input.title?.trim() || "Untitled document";
@@ -134,6 +184,7 @@ export async function createDocument(
       ownerId,
       title,
       content: input.content ? sanitizeDocumentHtml(input.content) : "",
+      contentJson: input.contentJson ? sanitizeContentJson(input.contentJson) : "",
     },
   });
 
@@ -143,7 +194,7 @@ export async function createDocument(
 export async function updateDocument(
   userId: string,
   documentId: string,
-  input: { title?: string; content?: string; baseUpdatedAt?: string },
+  input: { title?: string; content?: string; contentJson?: string; baseUpdatedAt?: string },
 ): Promise<DocumentDetail> {
   await ensureDatabase();
   const document = await loadDocument(documentId);
@@ -167,13 +218,23 @@ export async function updateDocument(
     );
   }
 
+  const before: Snapshot = {
+    title: document.title,
+    content: document.content,
+    contentJson: document.contentJson,
+  };
+  const after: Snapshot = {
+    title: input.title ?? document.title,
+    content: input.content !== undefined ? sanitizeDocumentHtml(input.content) : document.content,
+    contentJson:
+      input.contentJson !== undefined ? sanitizeContentJson(input.contentJson) : document.contentJson,
+  };
+
   await prisma.document.update({
     where: { id: documentId },
-    data: {
-      ...(input.title !== undefined ? { title: input.title } : {}),
-      ...(input.content !== undefined ? { content: sanitizeDocumentHtml(input.content) } : {}),
-    },
+    data: after,
   });
+  await captureVersion(documentId, userId, before, after);
 
   return getDocument(userId, documentId);
 }
@@ -222,13 +283,15 @@ export async function grantAccess(
     where: { email: email.toLowerCase() },
   });
   if (!recipient) {
-    throw new DocumentError(
-      "No Folio account uses that email. Try one of the seeded accounts.",
-      404,
-    );
+    throw new DocumentError("No Folio account uses that email. They need to register first.", 404);
   }
   if (recipient.id === document.ownerId) {
     throw new DocumentError("The owner already has full access.", 400);
+  }
+
+  const existing = document.shares.find((item) => item.userId === recipient.id);
+  if (existing && parsePermission(existing.permission) === permission) {
+    throw new DocumentError("That person already has this access.", 409);
   }
 
   await prisma.documentShare.upsert({

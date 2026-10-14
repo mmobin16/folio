@@ -60,21 +60,117 @@ select {
   background: rgba(30, 26, 22, 0.46);
 }
 
-.folio-prose {
-  min-height: 58vh;
-  padding: 1.5rem 1.25rem 3rem;
-  outline: none;
-  color: var(--ink);
-  font-family: var(--font-fraunces), Georgia, serif;
-  font-size: 1.125rem;
-  line-height: 1.7;
-  overflow-wrap: anywhere;
+.doc-canvas {
+  padding: 1.75rem 1rem 4rem;
 }
 
-@media (min-width: 640px) {
+.folio-prose {
+  --page-pad-x: 1.25rem;
+  width: min(920px, 100%);
+  min-height: 1056px;
+  margin: 0 auto;
+  border: 1px solid var(--line);
+  background: var(--sheet);
+  padding: 3rem var(--page-pad-x) 4.5rem;
+  outline: none;
+  color: var(--ink);
+  font-family: var(--font-source), "Source Sans 3", sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  box-shadow: 0 1px 2px rgba(30, 26, 22, 0.06), 0 16px 40px rgba(30, 26, 22, 0.08);
+}
+
+@media (min-width: 800px) {
   .folio-prose {
-    padding: 2.25rem 2.75rem 4rem;
-    font-size: 1.2rem;
+    --page-pad-x: 64px;
+    padding-top: 56px;
+  }
+}
+
+.folio-prose .page-break,
+.folio-prose div[data-page-break] {
+  height: 36px;
+  margin: 56px calc(var(--page-pad-x) * -1);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+  box-shadow: 0 -10px 16px -12px rgba(30, 26, 22, 0.28), 0 10px 16px -12px rgba(30, 26, 22, 0.28);
+}
+
+.folio-chart,
+.folio-prose div[data-chart] {
+  margin: 1rem 0;
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: #fff;
+  padding: 0.85rem 1rem 1rem;
+}
+
+.folio-chart-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.folio-chart ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.folio-chart li {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.35rem 0;
+}
+
+.folio-chart-track {
+  display: block;
+  height: 0.7rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(31, 106, 98, 0.12);
+}
+
+.folio-chart-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.folio-chart-label,
+.folio-chart-value {
+  font-size: 0.8rem;
+}
+
+@media print {
+  body {
+    background: white;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .folio-prose {
+    width: auto;
+    min-height: 0;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .folio-prose .page-break,
+  .folio-prose div[data-page-break] {
+    height: 0;
+    margin: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    break-after: page;
   }
 }
 
@@ -83,7 +179,7 @@ select {
 }
 
 .folio-prose p {
-  margin: 0.75rem 0;
+  margin: 0.4rem 0;
 }
 
 .folio-prose h1,
@@ -136,6 +232,39 @@ select {
   border-left: 3px solid var(--accent);
   padding-left: 1rem;
   color: var(--muted);
+}
+
+.folio-prose table {
+  width: 100%;
+  margin: 0.35rem 0;
+  border-collapse: collapse;
+  font-family: var(--font-source), "Source Sans 3", sans-serif;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+.folio-prose th,
+.folio-prose td {
+  border: 1px solid #c9beb2;
+  padding: 0.28rem 0.4rem;
+  vertical-align: top;
+  min-width: 2.75rem;
+}
+
+.folio-prose th {
+  background: rgba(31, 106, 98, 0.08);
+  font-weight: 650;
+}
+
+.folio-prose td p,
+.folio-prose th p {
+  margin: 0.1rem 0;
+}
+
+.folio-prose img {
+  display: inline-block;
+  max-width: min(220px, 100%);
+  height: auto;
 }
 
 .folio-prose a {

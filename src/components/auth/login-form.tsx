@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/lib/api-client";
@@ -68,6 +69,12 @@ export function LoginForm({ nextPath }: { nextPath: string }) {
       <Button type="submit" className="w-full" disabled={pending}>
         {pending ? "Signing in" : "Sign in"}
       </Button>
+      <p className="text-center text-sm text-muted">
+        New here?{" "}
+        <Link href="/register" className="font-semibold text-ink underline-offset-2 hover:underline">
+          Create an account
+        </Link>
+      </p>
       <div className="grid gap-2 pt-2">
         {DEMO_USERS.map((account) => (
           <button

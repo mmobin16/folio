@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { sanitizeDocumentHtml, textPreview } from "../src/lib/html";
+import { sanitizeContentJson } from "../src/lib/content-json";
+import { htmlToPlainText, sanitizeDocumentHtml, textPreview } from "../src/lib/html";
 import { htmlToMarkdown, markdownFilename } from "../src/lib/markdown-export";
+import { htmlToPdf } from "../src/lib/pdf";
 import { hashPassword, verifyPassword } from "../src/lib/passwords";
 
 describe("document html", () => {
@@ -23,6 +25,39 @@ describe("document html", () => {
 
   it("builds a short plain-text preview", () => {
     expect(textPreview("<p>Hello <strong>there</strong></p>")).toBe("Hello there");
+  });
+});
+
+describe("structured content and export", () => {
+  it("keeps a TipTap document and drops unsafe links", () => {
+    const clean = sanitizeContentJson(
+      JSON.stringify({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "text",
+                text: "Go",
+                marks: [{ type: "link", attrs: { href: "javascript:alert(1)" } }],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(clean).toContain("Go");
+    expect(clean).not.toContain("javascript:");
+  });
+
+  it("writes a PDF download and a plain-text copy", () => {
+    const pdf = Buffer.from(htmlToPdf("Notes", "<h1>Notes</h1><p>Hello <strong>bold</strong></p><ul><li>One</li></ul>"));
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(pdf.toString("latin1")).toContain("Notes");
+    expect(pdf.toString("latin1")).toContain("%%EOF");
+    expect(htmlToPlainText("<h1>Notes</h1><p>Hello</p>")).toContain("Notes");
+    expect(htmlToPlainText("<h1>Notes</h1><p>Hello</p>")).toContain("Hello");
   });
 });
 

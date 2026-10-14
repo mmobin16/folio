@@ -3,6 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { PrismaLibSQL } from "@prisma/adapter-libsql";
 import { createClient } from "@libsql/client";
 import { INIT_SQL } from "@/server/schema-sql";
+import { upgradeExistingDatabase } from "@/server/schema-upgrade";
 import { seedDemoData } from "@/server/seed";
 
 type Connection = {
@@ -81,6 +82,8 @@ async function prepareDatabase(): Promise<void> {
     );
     if (existing.rows.length === 0) {
       await client.executeMultiple(INIT_SQL);
+    } else {
+      await upgradeExistingDatabase(client);
     }
   } finally {
     client.close();

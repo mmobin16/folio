@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api-client";
-import type { DocumentDetail, SharePermission } from "@/lib/types";
+import type { DocumentDetail, SharePermission, UserMatch } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { confirmFolio } from "@/components/ui/folio-dialogs";
 
 type ShareDialogProps = {
   documentId: string;
@@ -27,7 +28,9 @@ export function ShareDialog({
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [people, setPeople] = useState(shares);
   const [email, setEmail] = useState("");
+  const [matches, setMatches] = useState<UserMatch[]>([]);
   const [permission, setPermission] = useState<SharePermission>("edit");
+  const searchTimer = useRef<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -37,6 +40,21 @@ export function ShareDialog({
     if (open && !node.open) node.showModal();
     if (!open && node.open) node.close();
   }, [open]);
+
+  function onEmail(value: string) {
+    setEmail(value);
+    if (searchTimer.current) window.clearTimeout(searchTimer.current);
+    searchTimer.current = window.setTimeout(() => {
+      const query = value.trim();
+      if (query.length < 1) {
+        setMatches([]);
+        return;
+      }
+      void api<{ users: UserMatch[] }>(`/api/users/search?q=${encodeURIComponent(query)}`)
+        .then((result) => setMatches(result.users))
+        .catch(() => setMatches([]));
+    }, 250);
+  }
 
   async function grant(event: React.FormEvent) {
     event.preventDefault();
@@ -49,6 +67,7 @@ export function ShareDialog({
       });
       setPeople(result.document.shares);
       setEmail("");
+      setMatches([]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not update access.");
     } finally {
@@ -69,7 +88,14 @@ export function ShareDialog({
     }
   }
 
-  async function revoke(userId: string) {
+  async function revoke(userId: string, name: string) {
+    const confirmed = await confirmFolio({
+      title: "Remove access",
+      message: `${name} will no longer be able to open this document.`,
+      confirmLabel: "Remove",
+      danger: true,
+    });
+    if (!confirmed) return;
     setError(null);
     try {
       const result = await api<{ document: DocumentDetail }>(
@@ -135,7 +161,7 @@ export function ShareDialog({
                   <button
                     type="button"
                     className="text-sm font-semibold text-danger"
-                    onClick={() => void revoke(person.userId)}
+                    onClick={() => void revoke(person.userId, person.name)}
                   >
                     Remove
                   </button>
@@ -152,15 +178,37 @@ export function ShareDialog({
             <label className="sr-only" htmlFor="share-email">
               Email
             </label>
-            <input
-              id="share-email"
-              type="email"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="jordan.lee@ajaia.dev"
-              className="rounded-md border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-accent"
-            />
+            <div className="relative">
+              <input
+                id="share-email"
+                type="text"
+                autoComplete="off"
+                required
+                value={email}
+                onChange={(event) => onEmail(event.target.value)}
+                placeholder="Search by name or email"
+                className="w-full rounded-md border border-line bg-paper px-3 py-2 text-sm outline-none focus:border-accent"
+              />
+              {matches.length > 0 ? (
+                <ul className="absolute z-10 mt-1 max-h-48 w-full overflow-auto rounded-md border border-line bg-sheet shadow-lg">
+                  {matches.map((match) => (
+                    <li key={match.id}>
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left text-sm hover:bg-paper"
+                        onClick={() => {
+                          setEmail(match.email);
+                          setMatches([]);
+                        }}
+                      >
+                        <span className="font-semibold">{match.name}</span>
+                        <span className="mt-0.5 block text-muted">{match.email}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
             <select
               aria-label="Permission"
               value={permission}

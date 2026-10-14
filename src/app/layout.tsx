@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Fraunces, Source_Sans_3 } from "next/font/google";
+import { FolioDialogs } from "@/components/ui/folio-dialogs";
 import "./globals.css";
 
 const sourceSans = Source_Sans_3({
@@ -25,7 +26,9 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${sourceSans.variable} ${fraunces.variable} h-full antialiased`}>
-      <body className="min-h-full">{children}</body>
+      <body className="min-h-full">
+        <FolioDialogs>{children}</FolioDialogs>
+      </body>
     </html>
   );
 }

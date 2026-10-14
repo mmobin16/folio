@@ -17,13 +17,20 @@ Prisma CLI always targets `prisma/dev.db`. At runtime, `src/lib/db.ts` uses `TUR
 ## Data model
 
 ```text
-User 1──* Document        the owner
-User 1──* Session         login tokens, stored as SHA-256 hashes
-User 1──* DocumentShare   access granted by the owner
+User 1──1 Profile          public name and email, no password
+User 1──* Session          login tokens, stored as SHA-256 hashes
+User 1──* Document         the owner
+User 1──* DocumentShare    access granted by the owner
 Document 1──* DocumentShare
+Document 1──* DocumentVersion
+Document 1──* Comment
+Document 1──* DocumentPresence
+Document 1──* Attachment
 ```
 
-`Document.content` is sanitized HTML, not a custom JSON tree. TipTap already round-trips the tags we allow (paragraphs, headings, lists, bold, italic, underline, quotes, links). HTML is also what Mammoth and Markdown produce, so import and the editor share one storage format. A stricter ProseMirror JSON document would be the next step if we added operational transform or a CRDT. It was not worth a second storage format for this slice.
+Passwords stay on `User`. `Profile` is the public identity and is updated together with the account.
+
+`Document.content` is sanitized HTML, which is what import, preview, and export use. `Document.contentJson` is the TipTap document, cleaned to the same nodes the editor can round-trip. Saves write both. `javascript:` links are dropped from either copy.
 
 `DocumentShare.permission` is the string `view` or `edit`. SQLite has no enums. Unknown values are treated as `view` so a bad row cannot grant edit by accident.
 
@@ -35,8 +42,10 @@ Implemented once in `resolveAccess` and called by every document service method.
 | --- | --- | --- | --- | --- |
 | Read | yes | yes | yes | 403 if the row exists, 404 if it does not |
 | Edit title and body | yes | yes | no | no |
+| Comment or suggest | yes | yes | yes | no |
+| Apply a suggestion or restore a version | yes | yes | no | no |
 | Change who has access | yes | no | no | no |
-| Delete | yes | no | no | no |
+| Delete the document | yes | no | no | no |
 
 A missing document and a document you cannot see are different responses on purpose. A reviewer who pastes the wrong id should see "no access" rather than a generic 404. The id is unguessable (a cuid), so the existence leak is small.
 
@@ -44,7 +53,7 @@ Saves send `baseUpdatedAt`. If the stored timestamp moved, the API returns 409 i
 
 ## Auth
 
-Two seeded users, no signup. A login creates a random 32-byte token, stores only its hash, and sets an `HttpOnly` cookie. `src/proxy.ts` redirects anonymous visits under `/documents` to the login page. That redirect is a convenience. `getCurrentUser` loads the session from the database on every page and API call, so a stale cookie is not treated as a person.
+Anyone can register. Two seeded users are still created so a reviewer can open the shared welcome draft immediately. A login creates a random 32-byte token, stores only its hash, and sets an `HttpOnly` cookie. `src/proxy.ts` redirects anonymous visits under `/documents` and `/account` to the login page. That redirect is a convenience. `getCurrentUser` loads the session from the database on every page and API call, so a stale cookie is not treated as a person.
 
 Passwords use Node's `scrypt`. A native bcrypt addon was rejected because it is fragile on Windows and on Vercel's build image. Login always runs scrypt, including when the email does not exist, so a missing account is not obviously faster than a wrong password.
 
@@ -66,21 +75,31 @@ Imported and hand-written HTML both pass `sanitizeDocumentHtml` before insert. T
 - `.md` is rendered with `marked`, then sanitized.
 - `.docx` must start with a zip header, then Mammoth converts it to HTML and the same sanitizer runs.
 
-The product choice is "import creates a new draft", not "replace the document I have open". That is harder to do by accident.
+The desk import creates a new draft. The Files tab on an open document can replace that document's body after a confirmation. The title is kept.
 
 ## API
 
 | Method | Path | Who |
 | --- | --- | --- |
 | POST | `/api/auth/login` | public |
+| POST | `/api/auth/register` | public, then signs the new person in |
 | POST | `/api/auth/logout` | any cookie |
+| GET, PATCH | `/api/account` | signed in |
+| GET | `/api/users/search` | signed in |
 | GET | `/api/documents` | signed in |
 | POST | `/api/documents` | signed in, creates an owned draft |
-| POST | `/api/documents/import` | signed in |
+| POST | `/api/documents/import` | signed in, creates a new draft |
 | GET, PATCH, DELETE | `/api/documents/:id` | access rules above |
-| PUT | `/api/documents/:id/share` | owner, upserts view or edit |
+| POST | `/api/documents/:id/import` | editor or owner, replaces the body |
+| PUT | `/api/documents/:id/share` | owner, grants or changes view or edit |
 | DELETE | `/api/documents/:id/share/:userId` | owner |
-| GET | `/api/documents/:id/export` | anyone who can read |
+| GET | `/api/documents/:id/export` | anyone who can read. `?format=pdf` or `txt` |
+| GET, POST | `/api/documents/:id/comments` | anyone who can read |
+| PATCH, DELETE | `/api/documents/:id/comments/:commentId` | resolve, apply, or delete |
+| GET | `/api/documents/:id/versions` | anyone who can read |
+| POST | `/api/documents/:id/versions/:versionId/restore` | editor or owner |
+| GET, POST, DELETE | `/api/documents/:id/presence` | anyone who can read |
+| GET, POST | `/api/documents/:id/attachments` | read to list, edit to upload |
 
 Validation errors use Zod and return `{ error: string }` with a 4xx status. Unexpected failures return a generic 500 and log the cause on the server.
 
@@ -88,15 +107,11 @@ Validation errors use Zod and return `{ error: string }` with a 4xx status. Unex
 
 `tests/permissions.test.ts` locks the access table. `tests/content.test.ts` and `tests/import-file.test.ts` lock the HTML boundary. `tests/access.integration.test.ts` boots a temporary SQLite file through the same `ensureDatabase` path production uses, then walks owner, editor, viewer, stale save, and revoke. The integration test is the one that would fail if the hand-written `INIT_SQL` drifted from the Prisma schema.
 
-## What was cut, and why
+## What was left simple, and why
 
-**Real-time collaboration.** A CRDT or WebSocket server does not fit Vercel serverless or a 4–6 hour slice, and a buggy presence indicator would be worse than a clear autosave status.
+**Live merging.** Presence is a heartbeat every few seconds, not a CRDT or a WebSocket. Vercel serverless can store the heartbeat in SQLite. It cannot host a durable collaboration socket without another service. A save that lost the race still returns 409.
 
-**Open signup.** Seeded accounts make the sharing demo deterministic. Reviewers do not have to create a second user.
-
-**Postgres.** A correct relational model does not require Postgres at this size. SQLite locally plus Turso in production keeps the schema identical and the cost at zero.
-
-**Version history and comments.** Both are listed as the next 2–4 hours in the README. They should sit on top of the document row that already exists, not instead of sharing.
+**Postgres.** A correct relational model does not require Postgres at this size. SQLite locally plus Turso in production keeps the schema identical and the cost at zero. An existing database receives new tables on the next boot.
 
 ## Deploy note
 

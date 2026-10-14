@@ -1,6 +1,6 @@
-// Folio stores users, sessions, documents, and shares in SQLite.
-// Local development uses a file database. Production on Vercel uses the
-// same schema through Turso (hosted libSQL). See README.md.
+// Folio stores credentials, profiles, sessions, documents, and collaboration
+// data in SQLite. Local development uses a file database. Production on
+// Vercel uses the same schema through Turso (hosted libSQL). See README.md.
 
 generator client {
   provider = "prisma-client-js"
@@ -13,17 +13,30 @@ datasource db {
   url      = "file:./dev.db"
 }
 
-/// A person who can own documents or receive access to them.
-/// This demo ships with seeded accounts and does not offer open registration.
+/// Credential record. Passwords live here, never on Profile.
 model User {
-  id           String          @id @default(cuid())
-  email        String          @unique
-  name         String
-  passwordHash String
-  createdAt    DateTime        @default(now())
-  documents    Document[]      @relation("OwnedDocuments")
-  shares       DocumentShare[]
-  sessions     Session[]
+  id               String             @id @default(cuid())
+  email            String             @unique
+  name             String
+  passwordHash     String
+  createdAt        DateTime           @default(now())
+  profile          Profile?
+  documents        Document[]         @relation("OwnedDocuments")
+  shares           DocumentShare[]
+  sessions         Session[]
+  comments         Comment[]          @relation("CommentAuthor")
+  resolvedComments Comment[]          @relation("CommentResolver")
+  versions         DocumentVersion[]
+  presence         DocumentPresence[]
+  attachments      Attachment[]
+}
+
+/// Public identity for a user. No password column.
+model Profile {
+  userId String @id
+  name   String
+  email  String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 /// Login session. The cookie holds the raw token; the database stores only its hash.
@@ -38,16 +51,22 @@ model Session {
   @@index([userId])
 }
 
-/// A rich-text document. `content` is sanitized HTML produced by the editor or an import.
+/// A rich-text document.
+/// `content` is sanitized HTML. `contentJson` is the editor's structured document.
 model Document {
-  id        String          @id @default(cuid())
-  title     String
-  content   String          @default("")
-  ownerId   String
-  owner     User            @relation("OwnedDocuments", fields: [ownerId], references: [id], onDelete: Cascade)
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-  shares    DocumentShare[]
+  id          String             @id @default(cuid())
+  title       String
+  content     String             @default("")
+  contentJson String             @default("")
+  ownerId     String
+  owner       User               @relation("OwnedDocuments", fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  shares      DocumentShare[]
+  versions    DocumentVersion[]
+  comments    Comment[]
+  presence    DocumentPresence[]
+  attachments Attachment[]
 
   @@index([ownerId])
   @@index([updatedAt])
@@ -66,4 +85,71 @@ model DocumentShare {
 
   @@unique([documentId, userId])
   @@index([userId])
+}
+
+/// A saved snapshot. A short burst of autosaves from one person updates the latest row.
+model DocumentVersion {
+  id          String   @id @default(cuid())
+  documentId  String
+  authorId    String
+  title       String
+  content     String
+  contentJson String   @default("")
+  createdAt   DateTime @default(now())
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  author      User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, createdAt])
+}
+
+/// A comment or a suggested edit. Suggestions do not change the document until someone applies them.
+model Comment {
+  id           String    @id @default(cuid())
+  documentId   String
+  authorId     String
+  parentId     String?
+  body         String
+  kind         String    @default("comment")
+  suggestion   String    @default("")
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime?
+  resolvedById String?
+  document     Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  author       User      @relation("CommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  resolver     User?     @relation("CommentResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  parent       Comment?  @relation("CommentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies      Comment[] @relation("CommentThread")
+
+  @@index([documentId])
+  @@index([parentId])
+}
+
+/// Who has the document open. A row older than a few seconds is treated as gone.
+model DocumentPresence {
+  id         String   @id @default(cuid())
+  documentId String
+  userId     String
+  activity   String   @default("viewing")
+  lastSeenAt DateTime
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, userId])
+  @@index([documentId])
+}
+
+/// A file attached to a document. Bytes are base64 so libSQL can store them as text.
+model Attachment {
+  id           String   @id @default(cuid())
+  documentId   String
+  uploadedById String
+  filename     String
+  mimeType     String
+  size         Int
+  data         String
+  createdAt    DateTime @default(now())
+  document     Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
 }

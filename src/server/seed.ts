@@ -38,6 +38,24 @@ export async function seedDemoData(prisma: PrismaClient): Promise<void> {
     },
   });
 
+  for (const person of [alex, jordan]) {
+    await prisma.profile.upsert({
+      where: { userId: person.id },
+      update: {},
+      create: { userId: person.id, name: person.name, email: person.email },
+    });
+  }
+
+  const missingProfiles = await prisma.user.findMany({
+    where: { profile: null },
+    select: { id: true, name: true, email: true },
+  });
+  for (const person of missingProfiles) {
+    await prisma.profile.create({
+      data: { userId: person.id, name: person.name, email: person.email },
+    });
+  }
+
   const welcome = await prisma.document.findFirst({
     where: { ownerId: alex.id, title: WELCOME_TITLE },
     select: { id: true },

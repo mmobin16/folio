@@ -1,14 +1,16 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { DocumentEditor } from "@/components/editor/document-editor";
+import { PresenceBar } from "@/components/editor/presence-bar";
+import { DocumentPanels } from "@/components/documents/document-panels";
 import { ShareDialog } from "@/components/documents/share-dialog";
 import { api, ApiError } from "@/lib/api-client";
 import { roleLabel } from "@/lib/format";
-import type { DocumentDetail } from "@/lib/types";
+import type { AttachmentView, CommentView, DocumentDetail, VersionListItem } from "@/lib/types";
 import { Button } from "@/components/ui/button";
+import { confirmFolio } from "@/components/ui/folio-dialogs";
 
 type SaveState = "saved" | "saving" | "unsaved" | "error";
 
@@ -19,12 +21,30 @@ const statusLabel: Record<SaveState, string> = {
   error: "Could not save",
 };
 
-export function EditorShell({ document: initial }: { document: DocumentDetail }) {
+export function EditorShell({
+  document: initial,
+  viewerId,
+  viewerName,
+  viewerEmail,
+  comments,
+  versions,
+  attachments,
+}: {
+  document: DocumentDetail;
+  viewerId: string;
+  viewerName: string;
+  viewerEmail: string;
+  comments: CommentView[];
+  versions: VersionListItem[];
+  attachments: AttachmentView[];
+}) {
   const router = useRouter();
   const [title, setTitle] = useState(initial.title);
   const [status, setStatus] = useState<SaveState>("saved");
   const [error, setError] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [panel, setPanel] = useState<"comments" | "history" | "files">("comments");
   const [shares, setShares] = useState(initial.shares);
   const [words, setWords] = useState(0);
   const sawEditorUpdate = useRef(false);
@@ -32,6 +52,7 @@ export function EditorShell({ document: initial }: { document: DocumentDetail })
   const draft = useRef({
     title: initial.title,
     html: initial.content,
+    json: initial.contentJson,
     updatedAt: initial.updatedAt,
     dirty: false,
     saving: false,
@@ -67,6 +88,7 @@ export function EditorShell({ document: initial }: { document: DocumentDetail })
     const snapshot = {
       title: draft.current.title,
       html: draft.current.html,
+      json: draft.current.json,
       updatedAt: draft.current.updatedAt,
     };
     draft.current.dirty = false;
@@ -79,6 +101,7 @@ export function EditorShell({ document: initial }: { document: DocumentDetail })
         body: JSON.stringify({
           title: snapshot.title,
           content: snapshot.html,
+          contentJson: snapshot.json,
           baseUpdatedAt: snapshot.updatedAt,
         }),
       });
@@ -117,7 +140,7 @@ export function EditorShell({ document: initial }: { document: DocumentDetail })
     }, 700);
   }
 
-  function markDirty(partial: { title?: string; html?: string }) {
+  function markDirty(partial: { title?: string; html?: string; json?: string }) {
     draft.current = { ...draft.current, ...partial, dirty: true };
     setStatus("unsaved");
     setError(null);
@@ -135,8 +158,55 @@ export function EditorShell({ document: initial }: { document: DocumentDetail })
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  async function createBlank() {
+    setBusy(true);
+    try {
+      const result = await api<{ document: { id: string } }>("/api/documents", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      router.push(`/documents/${result.document.id}`);
+      router.refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not create a document.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function makeCopy() {
+    setBusy(true);
+    const copyTitle = `${draft.current.title.trim() || "Untitled"} copy`.slice(0, 120);
+    try {
+      const result = await api<{ document: { id: string } }>("/api/documents", {
+        method: "POST",
+        body: JSON.stringify({ title: copyTitle }),
+      });
+      await api(`/api/documents/${result.document.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: copyTitle,
+          content: draft.current.html,
+          contentJson: draft.current.json,
+        }),
+      });
+      router.push(`/documents/${result.document.id}`);
+      router.refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not copy this document.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function removeDocument() {
-    if (!window.confirm(`Delete “${draft.current.title}”? This cannot be undone.`)) return;
+    const confirmed = await confirmFolio({
+      title: "Delete document",
+      message: `“${draft.current.title}” will be removed from your desk. This cannot be undone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!confirmed) return;
     try {
       await api(`/api/documents/${initial.id}`, { method: "DELETE" });
       router.push("/documents");
@@ -147,62 +217,9 @@ export function EditorShell({ document: initial }: { document: DocumentDetail })
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <Link href="/documents" className="text-sm font-semibold text-muted hover:text-ink">
-          ← Documents
-        </Link>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-full border border-line px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-muted">
-            {roleLabel(initial.role)}
-          </span>
-          <a
-            className="rounded-full border border-line bg-sheet px-3 py-1.5 text-sm font-semibold hover:border-ink/30"
-            href={`/api/documents/${initial.id}/export`}
-          >
-            Download Markdown
-          </a>
-          <Button variant="secondary" onClick={() => setShareOpen(true)}>
-            Share
-          </Button>
-          {initial.canDelete ? (
-            <Button variant="danger" onClick={() => void removeDocument()}>
-              Delete
-            </Button>
-          ) : null}
-        </div>
-      </div>
-
-      <label className="sr-only" htmlFor="document-title">
-        Title
-      </label>
-      <input
-        id="document-title"
-        value={title}
-        readOnly={!initial.canEdit}
-        maxLength={120}
-        onChange={(event) => {
-          setTitle(event.target.value);
-          markDirty({ title: event.target.value });
-        }}
-        className="w-full bg-transparent font-serif text-4xl tracking-tight text-ink outline-none placeholder:text-muted/70 sm:text-5xl"
-        placeholder="Untitled document"
-      />
-
-      <p className="mt-2 mb-4 text-sm text-muted" aria-live="polite">
-        {statusLabel[status]}
-        {words > 0 ? ` · ${words} ${words === 1 ? "word" : "words"}` : ""}
-        {!initial.canEdit ? " · Read only" : ""}
-      </p>
-
-      {!initial.canEdit ? (
-        <p className="mb-4 rounded-md border border-line bg-sheet px-3 py-2 text-sm text-muted">
-          You can read this draft. Ask {initial.owner.name} if you need edit access.
-        </p>
-      ) : null}
-
+    <div>
       {error ? (
-        <p className="mb-4 rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger" role="alert">
+        <p className="no-print mx-auto mt-3 max-w-[960px] rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger" role="alert">
           {error}{" "}
           {error.includes("Reload") ? (
             <button type="button" className="font-semibold underline" onClick={() => window.location.reload()}>
@@ -214,20 +231,94 @@ export function EditorShell({ document: initial }: { document: DocumentDetail })
 
       <DocumentEditor
         content={initial.content}
+        contentJson={initial.contentJson}
         editable={initial.canEdit}
-        onChange={(html, text) => {
+        documentId={initial.id}
+        canDelete={initial.canDelete}
+        busy={busy}
+        onNew={() => void createBlank()}
+        onOpen={() => router.push("/documents")}
+        onMakeCopy={() => void makeCopy()}
+        onShare={() => setShareOpen(true)}
+        onRename={() => document.getElementById("document-title")?.focus()}
+        onHistory={() => {
+          setPanel("history");
+          document.getElementById("document-tools")?.scrollIntoView({ behavior: "smooth" });
+        }}
+        onDelete={() => void removeDocument()}
+        onNotice={setError}
+        viewerName={viewerName}
+        viewerEmail={viewerEmail}
+        leading={
+          <div className="flex min-w-0 items-center gap-2">
+            <label className="sr-only" htmlFor="document-title">
+              Title
+            </label>
+            <input
+              id="document-title"
+              value={title}
+              readOnly={!initial.canEdit}
+              maxLength={120}
+              title={`Owned by ${initial.owner.name}${shares.length > 0 ? `. Shared with ${shares.map((person) => person.name).join(", ")}` : ""}`}
+              onChange={(event) => {
+                setTitle(event.target.value);
+                markDirty({ title: event.target.value });
+              }}
+              className="h-8 min-w-0 flex-1 rounded-md bg-transparent px-2 text-[15px] font-semibold tracking-tight text-ink outline-none placeholder:text-muted/70 hover:bg-ink/[0.04] focus:bg-ink/[0.04]"
+              placeholder="Untitled document"
+            />
+            <span className="hidden shrink-0 text-xs text-muted sm:inline" aria-live="polite">
+              {statusLabel[status]}
+              {words > 0 ? ` · ${words} ${words === 1 ? "word" : "words"}` : ""}
+            </span>
+            <span className="hidden shrink-0 text-xs text-muted lg:inline">{roleLabel(initial.role)}</span>
+            <PresenceBar
+              documentId={initial.id}
+              viewerId={viewerId}
+              activity={status === "unsaved" || status === "saving" ? "editing" : "viewing"}
+              compact
+            />
+            {initial.canEdit ? (
+              <Button variant="ghost" className="!h-8 !px-3 !py-0" onClick={() => void flushRef.current()}>
+                Save
+              </Button>
+            ) : null}
+            <Button className="!h-8 !bg-accent !px-3.5 !py-0 !text-white hover:!bg-[#18574f]" onClick={() => setShareOpen(true)}>
+              Share
+            </Button>
+          </div>
+        }
+        onChange={(html, text, json) => {
           const count = text.trim() ? text.trim().split(/\s+/).length : 0;
           setWords(count);
-          // TipTap emits one update when it finishes loading the saved HTML.
+          // TipTap emits one update when it finishes loading the saved document.
           if (!sawEditorUpdate.current) {
             sawEditorUpdate.current = true;
             draft.current.html = html;
+            draft.current.json = json;
             return;
           }
           if (!initial.canEdit) return;
-          markDirty({ html });
+          markDirty({ html, json });
         }}
       />
+
+      <div id="document-tools" className="no-print mx-auto max-w-3xl px-4 pb-16">
+        <DocumentPanels
+          documentId={initial.id}
+          viewerId={viewerId}
+          canEdit={initial.canEdit}
+          canDelete={initial.canDelete}
+          comments={comments}
+          versions={versions}
+          attachments={attachments}
+          panel={panel}
+          onPanelChange={setPanel}
+          onDocumentReplaced={() => {
+            router.refresh();
+          }}
+        />
+      </div>
 
       <ShareDialog
         documentId={initial.id}
